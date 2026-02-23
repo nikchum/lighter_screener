@@ -13,10 +13,10 @@ const CONFIG = {
   // --- Настройки Telegram ---
   telegram: {
     enabled: false, // Поставьте true, когда впишете данные
-    botToken: "",
-    // botToken: "8222776620:AAHPqgNOk8ZPEAI03ZBfxy0tDtGXoxJDaGE",
-    chatId: "",
-    // chatId: "-1003610905611",
+    // botToken: "",
+    botToken: "8222776620:AAHPqgNOk8ZPEAI03ZBfxy0tDtGXoxJDaGE",
+    // chatId: "",
+    chatId: "-1003610905611",
   },
 
   // --- Пороги объема в USD ---
@@ -73,13 +73,11 @@ async function sendTelegramAlert(message) {
 function shouldAlert(symbol, side, price) {
   const key = `${symbol}_${side}_${price}`;
   const now = Date.now();
-  if (alertCache.has(key) && now - alertCache.get(key) < CONFIG.alertCooldownMs)
-    return false;
+  if (alertCache.has(key) && now - alertCache.get(key) < CONFIG.alertCooldownMs) return false;
   alertCache.set(key, now);
 
   if (alertCache.size > 2000) {
-    for (let [k, v] of alertCache)
-      if (now - v > CONFIG.alertCooldownMs) alertCache.delete(k);
+    for (let [k, v] of alertCache) if (now - v > CONFIG.alertCooldownMs) alertCache.delete(k);
   }
   return true;
 }
@@ -115,9 +113,7 @@ function createSocketShard(symbols, shardId) {
   let pingInterval;
 
   ws.on("open", () => {
-    console.log(
-      `🌐 [Шард ${shardId}] Соединение открыто. Подписка на ${symbols.length} пар...`,
-    );
+    console.log(`🌐 [Шард ${shardId}] Соединение открыто. Подписка на ${symbols.length} пар...`);
 
     // Формируем параметры в стиле Binance: ["btc@depth", "eth@depth"]
 
@@ -150,10 +146,9 @@ function createSocketShard(symbols, shardId) {
     const { bids, asks } = msg.order_book || {};
     if (!bids || !asks) return;
     if (bids.length > 0 && asks.length > 0) {
-      const symbol = symbolsInfo.get(+msg.channel.split(':')[1]);
+      const symbol = symbolsInfo.get(+msg.channel.split(":")[1]);
 
-      const threshold =
-        CONFIG.customThresholdsUSD[symbol] || CONFIG.defaultThresholdUSD;
+      const threshold = CONFIG.customThresholdsUSD[symbol] || CONFIG.defaultThresholdUSD;
 
       const bestBid = parseFloat(bids[0].price);
       const bestAsk = parseFloat(asks[0].price);
@@ -178,8 +173,7 @@ function createSocketShard(symbols, shardId) {
                 const logMsg = `[${time}] 🚨 ${symbol.padEnd(8)} | ${sideName.padEnd(4)} | Цена: ${price} | Объем: $${volM}M | Дист: ${distance.toFixed(2)}%`;
                 console.log(logMsg);
 
-                const emoji =
-                  sideName === "BUY" ? "🟢 BUY (Bid)" : "🔴 SELL (Ask)";
+                const emoji = sideName === "BUY" ? "🟢 BUY (Bid)" : "🔴 SELL (Ask)";
                 const tgMessage =
                   `⬛ *Lighter*\n` +
                   `*Инструмент:* \`${symbol}\`\n` +
@@ -201,19 +195,14 @@ function createSocketShard(symbols, shardId) {
     }
   });
 
-  ws.on("error", (err) =>
-    console.error(`❌ [Шард ${shardId}] Ошибка:`, err.message),
-  );
+  ws.on("error", (err) => console.error(`❌ [Шард ${shardId}] Ошибка:`, err.message));
 
   ws.on("close", (code) => {
     console.log(
       `🔌 [Шард ${shardId}] Соединение закрыто (Код: ${code}). Реконнект через ${CONFIG.RECONNECT_DELAY}мс...`,
     );
     clearInterval(pingInterval);
-    setTimeout(
-      () => createSocketShard(symbols, shardId),
-      CONFIG.RECONNECT_DELAY,
-    );
+    setTimeout(() => createSocketShard(symbols, shardId), CONFIG.RECONNECT_DELAY);
   });
 }
 
