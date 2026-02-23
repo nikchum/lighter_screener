@@ -8,7 +8,7 @@ const CONFIG = {
   // Эндпоинт для получения списка тикеров (API)
   apiUrl: "https://explorer.elliot.ai",
   // Эндпоинт для WebSocket (Stream)
-  wsUrl: "wss://mainnet.zklighter.elliot.ai",
+  wsUrl: "wss://mainnet.zklighter.elliot.ai/stream",
 
   // --- Настройки Telegram ---
   telegram: {
@@ -20,22 +20,22 @@ const CONFIG = {
   },
 
   // --- Пороги объема в USD ---
-  defaultThresholdUSD: 500000,
+  defaultThresholdUSD: 500_000,
   customThresholdsUSD: {
-    BTCUSDT: 30000000, // 30 млн $
-    ETHUSDT: 20000000, // 20 млн $
-    SOLUSDT: 10000000, // 10 млн $
-    XRPUSDT: 10000000, // 10 млн $
-    HYPEUSDT: 5000000, // 5 млн $
-    "1000PEPEUSDT": 1000000, // 1 млн $
-    DOGEUSDT: 1000000, // 1 млн $
-    PAXGUSDT: 10000000, // 10 млн $
-    BNBUSDT: 10000000, // 10 млн $
-    SEIUSDT: 5000000, // 5 млн $
-    ZECUSDT: 1000000, // 1 млн $
-    LTCUSDT: 2000000, // 2 млн $
-    AAVEUSDT: 1000000, // 1 млн $
-    NEARUSDT: 1000000, // 1 млн $
+    BTC: 30000000, // 30 млн $
+    ETH: 20000000, // 20 млн $
+    SOL: 10000000, // 10 млн $
+    XRP: 10000000, // 10 млн $
+    HYPE: 5000000, // 5 млн $
+    "1000PEPE": 1000000, // 1 млн $
+    DOGE: 1000000, // 1 млн $
+    PAXG: 10000000, // 10 млн $
+    BNB: 10000000, // 10 млн $
+    SEI: 5000000, // 5 млн $
+    ZEC: 1000000, // 1 млн $
+    LTC: 2000000, // 2 млн $
+    AAVE: 1000000, // 1 млн $
+    NEAR: 1000000, // 1 млн $
   },
 
   // --- Оптимизация ---
@@ -49,6 +49,7 @@ const CONFIG = {
 };
 
 const alertCache = new Map();
+const symbolsInfo = new Map();
 
 // ==========================================
 // 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -72,11 +73,13 @@ async function sendTelegramAlert(message) {
 function shouldAlert(symbol, side, price) {
   const key = `${symbol}_${side}_${price}`;
   const now = Date.now();
-  if (alertCache.has(key) && now - alertCache.get(key) < CONFIG.alertCooldownMs) return false;
+  if (alertCache.has(key) && now - alertCache.get(key) < CONFIG.alertCooldownMs)
+    return false;
   alertCache.set(key, now);
 
   if (alertCache.size > 2000) {
-    for (let [k, v] of alertCache) if (now - v > CONFIG.alertCooldownMs) alertCache.delete(k);
+    for (let [k, v] of alertCache)
+      if (now - v > CONFIG.alertCooldownMs) alertCache.delete(k);
   }
   return true;
 }
@@ -87,9 +90,12 @@ function shouldAlert(symbol, side, price) {
 async function getTickers() {
   try {
     const res = await axios.get(`${CONFIG.apiUrl}/api/markets`);
-    console.log(res);
 
-    const tickers = res.data.map((item) => item.symbol).filter((coin) => !coin.endsWith("/USDC"));
+    const tickers = res.data.filter((coin) => !coin.symbol.endsWith("/USDC"));
+
+    tickers.forEach((ticker) => {
+      symbolsInfo.set(ticker.market_index, ticker.symbol);
+    });
 
     console.log(`✅ Найдено ${tickers.length} тикеров на Lighter`);
     console.log(tickers);
@@ -109,18 +115,21 @@ function createSocketShard(symbols, shardId) {
   let pingInterval;
 
   ws.on("open", () => {
-    console.log(`🌐 [Шард ${shardId}] Соединение открыто. Подписка на ${symbols.length} пар...`);
+    console.log(
+      `🌐 [Шард ${shardId}] Соединение открыто. Подписка на ${symbols.length} пар...`,
+    );
 
-    // Формируем параметры в стиле Binance: ["btcusdt@depth", "ethusdt@depth"]
-    const params = symbols.map((s) => `${s.toLowerCase()}@depth`);
+    // Формируем параметры в стиле Binance: ["btc@depth", "eth@depth"]
 
-    const subPayload = {
-      method: "SUBSCRIBE",
-      params: params,
-      id: shardId,
-    };
+    symbols.forEach(({ market_index }) => {
+      const subPayload = {
+        type: "subscribe",
+        channel: `order_book/${market_index}`,
+      };
 
-    ws.send(JSON.stringify(subPayload));
+      const text = JSON.stringify(subPayload);
+      ws.send(text);
+    });
 
     // Поддержание соединения
     pingInterval = setInterval(() => {
@@ -134,27 +143,28 @@ function createSocketShard(symbols, shardId) {
     const msg = JSON.parse(data);
 
     // Пропуск подтверждения подписки или пинга
-    if (msg.result === null || msg.id) return;
+    if (!msg.order_book) return;
 
-    // В Aster V3 данные стакана приходят в полях 'b' (bids) и 'a' (asks)
+    // В Lighter V3 данные стакана приходят в полях 'b' (bids) и 'a' (asks)
     // Либо в событии depthUpdate
-    if (msg.b.length > 0 && msg.a.length > 0) {
-      const symbol = msg.s;
-      const bids = msg.b;
-      const asks = msg.a;
+    const { bids, asks } = msg.order_book || {};
+    if (!bids || !asks) return;
+    if (bids.length > 0 && asks.length > 0) {
+      const symbol = symbolsInfo.get(+msg.channel.split(':')[1]);
 
-      const threshold = CONFIG.customThresholdsUSD[symbol] || CONFIG.defaultThresholdUSD;
+      const threshold =
+        CONFIG.customThresholdsUSD[symbol] || CONFIG.defaultThresholdUSD;
 
-      const bestBid = parseFloat(bids[0][0]);
-      const bestAsk = parseFloat(asks[0][0]);
+      const bestBid = parseFloat(bids[0].price);
+      const bestAsk = parseFloat(asks[0].price);
       const midPrice = (bestBid + bestAsk) / 2;
 
       const processSide = (levels, sideName) => {
         const depth = Math.min(levels.length, CONFIG.maxLevelsToScan);
 
         for (let i = 0; i < depth; i++) {
-          const price = parseFloat(levels[i][0]);
-          const size = parseFloat(levels[i][1]);
+          const price = parseFloat(levels[i].price);
+          const size = parseFloat(levels[i].size);
           const sizeUSD = price * size;
 
           if (sizeUSD >= threshold) {
@@ -168,15 +178,16 @@ function createSocketShard(symbols, shardId) {
                 const logMsg = `[${time}] 🚨 ${symbol.padEnd(8)} | ${sideName.padEnd(4)} | Цена: ${price} | Объем: $${volM}M | Дист: ${distance.toFixed(2)}%`;
                 console.log(logMsg);
 
-                const cleanSymbol = symbol.replace(/USDT$|USDC$/, "");
-                const emoji = sideName === "BUY" ? "🟢 BUY (Bid)" : "🔴 SELL (Ask)";
+                const emoji =
+                  sideName === "BUY" ? "🟢 BUY (Bid)" : "🔴 SELL (Ask)";
                 const tgMessage =
-                  `🟨 *AsterDex*\n` +
-                  `*Инструмент:* \`${cleanSymbol}\`\n` +
+                  `⬛ *Lighter*\n` +
+                  `*Инструмент:* \`${symbol}\`\n` +
                   `*Сторона:* \`${emoji}\`\n` +
-                  `*Цена:* \`${price}\`\n` +
+                  `*Цена:* \`${price.toString().replace(".", ",")}\`\n` +
                   `*Объем:* \`$${volM}M\`\n` +
                   `*Дистанция:* \`${distance.toFixed(2)}%\``;
+                // console.log(tgMessage);
 
                 sendTelegramAlert(tgMessage);
               }
@@ -190,14 +201,19 @@ function createSocketShard(symbols, shardId) {
     }
   });
 
-  ws.on("error", (err) => console.error(`❌ [Шард ${shardId}] Ошибка:`, err.message));
+  ws.on("error", (err) =>
+    console.error(`❌ [Шард ${shardId}] Ошибка:`, err.message),
+  );
 
   ws.on("close", (code) => {
     console.log(
       `🔌 [Шард ${shardId}] Соединение закрыто (Код: ${code}). Реконнект через ${CONFIG.RECONNECT_DELAY}мс...`,
     );
     clearInterval(pingInterval);
-    setTimeout(() => createSocketShard(symbols, shardId), CONFIG.RECONNECT_DELAY);
+    setTimeout(
+      () => createSocketShard(symbols, shardId),
+      CONFIG.RECONNECT_DELAY,
+    );
   });
 }
 
@@ -206,7 +222,7 @@ function createSocketShard(symbols, shardId) {
 // ==========================================
 
 async function main() {
-  console.log("🚀 Скринер Aster V3 запускается...");
+  console.log("🚀 Скринер Lighter V3 запускается...");
   const allTickers = await getTickers();
 
   // Разбиваем тикеры на группы по MAX_SUBS_PER_SOCKET
