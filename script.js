@@ -12,7 +12,7 @@ const CONFIG = {
 
   // --- Настройки Telegram ---
   telegram: {
-    enabled: false, // Поставьте true, когда впишете данные
+    enabled: true, // Поставьте true, когда впишете данные
     // botToken: "",
     botToken: "8222776620:AAHPqgNOk8ZPEAI03ZBfxy0tDtGXoxJDaGE",
     // chatId: "",
